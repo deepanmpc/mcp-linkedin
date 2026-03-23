@@ -92,18 +92,23 @@ def send_message(recipient_profile_url: str, message: str) -> str:
         if not profile:
             return json.dumps({"error": f"Could not find profile for '{profile_id}'"})
 
-        # Get the member URN ID (numeric part only)
-        entity_urn = profile.get("entityUrn", "")
-        # entityUrn format: urn:li:fs_profile:ACoAAxxxxx
-        member_urn_id = entity_urn.replace("urn:li:fs_profile:", "")
-        if not member_urn_id:
+        # Get the miniProfile URN - required format: urn:li:fs_miniProfile:XXXX
+        profile_urn = profile.get("entityUrn", "")
+        # entityUrn is like: urn:li:fs_profile:ACoXXXX
+        # We need the miniProfile URN ID which is the last segment
+        urn_id = profile_urn.split(":")[-1]
+        if not urn_id:
             return json.dumps({"error": f"Could not get URN for profile '{profile_id}'"})
 
-        # send_message expects recipients as list of member URN IDs
-        result = client.send_message(message_body=message, recipients=[member_urn_id])
+        # Build the full miniProfile URN
+        mini_profile_urn = f"urn:li:fs_miniProfile:{urn_id}"
+
+        # send_message returns False on success (quirk of the library)
+        result = client.send_message(message_body=message, recipients=[mini_profile_urn])
         if result is False:
+            return json.dumps({"success": True, "message": f"Message sent to {profile_id}!"})
+        else:
             return json.dumps({"error": "Failed to send message. Make sure you are connected with this person."})
-        return json.dumps({"success": True, "message": f"Message sent to {profile_id}!"})
     except Exception as e:
         logger.error(f"Error sending message: {e}")
         return json.dumps({"error": str(e)})
