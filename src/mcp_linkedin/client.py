@@ -88,27 +88,32 @@ def send_message(recipient_profile_url: str, message: str) -> str:
     client = get_client()
     try:
         profile_id = recipient_profile_url.strip("/").split("/")[-1]
+
+        # Get profile to extract profile_id (numeric urn_id)
         profile = client.get_profile(public_id=profile_id)
         if not profile:
             return json.dumps({"error": f"Could not find profile for '{profile_id}'"})
 
-        # Get the miniProfile URN - required format: urn:li:fs_miniProfile:XXXX
-        profile_urn = profile.get("entityUrn", "")
-        # entityUrn is like: urn:li:fs_profile:ACoXXXX
-        # We need the miniProfile URN ID which is the last segment
-        urn_id = profile_urn.split(":")[-1]
-        if not urn_id:
-            return json.dumps({"error": f"Could not get URN for profile '{profile_id}'"})
+        # profile_id is the numeric URN ID used by get_conversation_details
+        profile_urn_id = profile.get("profile_id")
+        if not profile_urn_id:
+            return json.dumps({"error": f"Could not get profile_id for '{profile_id}'"})
 
-        # Build the full miniProfile URN
-        mini_profile_urn = f"urn:li:fs_miniProfile:{urn_id}"
+        # Get existing conversation details (to get conversation_urn_id)
+        conversation = client.get_conversation_details(profile_urn_id)
+        if not conversation:
+            return json.dumps({"error": f"No existing conversation with '{profile_id}'. You must be connected first."})
 
-        # send_message returns False on success (quirk of the library)
-        result = client.send_message(message_body=message, recipients=[mini_profile_urn])
-        if result is False:
-            return json.dumps({"success": True, "message": f"Message sent to {profile_id}!"})
-        else:
-            return json.dumps({"error": "Failed to send message. Make sure you are connected with this person."})
+        conversation_urn_id = conversation.get("id")
+        if not conversation_urn_id:
+            return json.dumps({"error": "Could not get conversation ID."})
+
+        # Send via conversation_urn_id — the correct way per the library docs
+        err = client.send_message(conversation_urn_id=conversation_urn_id, message_body=message)
+        if err:
+            return json.dumps({"error": "Failed to send message."})
+        return json.dumps({"success": True, "message": f"Message sent to {profile_id}!"})
+
     except Exception as e:
         logger.error(f"Error sending message: {e}")
         return json.dumps({"error": str(e)})
