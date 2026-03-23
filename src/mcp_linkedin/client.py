@@ -92,11 +92,17 @@ def send_message(recipient_profile_url: str, message: str) -> str:
         if not profile:
             return json.dumps({"error": f"Could not find profile for '{profile_id}'"})
 
-        profile_urn = profile.get("entityUrn", "").replace("urn:li:fs_profile:", "")
-        if not profile_urn:
+        # Get the member URN ID (numeric part only)
+        entity_urn = profile.get("entityUrn", "")
+        # entityUrn format: urn:li:fs_profile:ACoAAxxxxx
+        member_urn_id = entity_urn.replace("urn:li:fs_profile:", "")
+        if not member_urn_id:
             return json.dumps({"error": f"Could not get URN for profile '{profile_id}'"})
 
-        client.send_message(message_body=message, recipients=[profile_urn])
+        # send_message expects recipients as list of member URN IDs
+        result = client.send_message(message_body=message, recipients=[member_urn_id])
+        if result is False:
+            return json.dumps({"error": "Failed to send message. Make sure you are connected with this person."})
         return json.dumps({"success": True, "message": f"Message sent to {profile_id}!"})
     except Exception as e:
         logger.error(f"Error sending message: {e}")
