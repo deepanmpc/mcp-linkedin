@@ -3,6 +3,7 @@ from fastmcp import FastMCP
 import os
 import logging
 import json
+import requests
 
 mcp = FastMCP("mcp-linkedin")
 logger = logging.getLogger(__name__)
@@ -19,10 +20,14 @@ def get_client():
 
     if cookies_str:
         try:
-            cookies = json.loads(cookies_str)
-            return Linkedin(email, "", cookies=cookies)
+            cookies_dict = json.loads(cookies_str)
+            # Convert dict to RequestsCookieJar which linkedin_api expects
+            cookie_jar = requests.cookies.RequestsCookieJar()
+            for key, value in cookies_dict.items():
+                cookie_jar.set(key, value, domain=".linkedin.com", path="/")
+            return Linkedin(email, password, cookies=cookie_jar)
         except Exception as e:
-            logger.warning(f"Failed to parse LINKEDIN_COOKIES: {e}, falling back to password auth")
+            logger.warning(f"Failed to use LINKEDIN_COOKIES: {e}, falling back to password auth")
 
     return Linkedin(email, password)
 
@@ -68,15 +73,11 @@ def search_jobs(keywords: str, limit: int = 3, location: str = '') -> str:
         job_list = []
         for job in jobs:
             try:
-                title = job.get("title", "Unknown Title")
-                entity_urn = job.get("entityUrn", "")
-                company = job.get("companyName", "Unknown Company")
-                location_str = job.get("formattedLocation", "Unknown Location")
                 job_list.append({
-                    "title": title,
-                    "company": company,
-                    "location": location_str,
-                    "urn": entity_urn,
+                    "title": job.get("title", "Unknown Title"),
+                    "company": job.get("companyName", "Unknown Company"),
+                    "location": job.get("formattedLocation", "Unknown Location"),
+                    "urn": job.get("entityUrn", ""),
                 })
             except Exception as e:
                 logger.error(f"Error parsing job: {e}")
@@ -97,15 +98,12 @@ def send_message(recipient_profile_url: str, message: str) -> str:
     """
     client = get_client()
     try:
-        # Extract slug from URL if needed
         profile_id = recipient_profile_url.strip("/").split("/")[-1]
 
-        # Get profile to resolve numeric profile_id
         profile = client.get_profile(public_id=profile_id)
         if not profile:
             return json.dumps({"error": f"Could not find profile for '{profile_id}'"})
 
-        # Get numeric profile_id (what the library expects for recipients)
         raw_profile_id = profile.get("profile_id")
         if not raw_profile_id:
             raw_profile_id = profile.get("entityUrn", "").split(":")[-1]
@@ -145,12 +143,10 @@ def create_post(text: str) -> str:
     """
     client = get_client()
     try:
-        # get_user_profile() is more reliable for own profile
         me = client.get_user_profile()
         if not me:
             return json.dumps({"error": "Could not retrieve your profile."})
 
-        # Extract full URN e.g. urn:li:person:ABC123
         urn = me.get("entityUrn", "")
         if not urn:
             plain_id = me.get("plainId") or me.get("miniProfile", {}).get("entityUrn", "").split(":")[-1]
@@ -158,12 +154,10 @@ def create_post(text: str) -> str:
         if not urn:
             return json.dumps({"error": "Could not resolve your URN."})
 
-        # Use client.post() — correct method name in linkedin_api
         client.post(urn=urn, text=text)
         return json.dumps({"success": True, "message": "Post created successfully!"})
 
     except AttributeError:
-        # Some versions use create_post instead
         try:
             profile = client.get_profile(public_id=None)
             person_urn = profile.get("entityUrn", "")
