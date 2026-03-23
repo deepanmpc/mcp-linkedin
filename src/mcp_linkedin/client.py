@@ -3,6 +3,7 @@ from fastmcp import FastMCP
 import os
 import logging
 import json
+import uuid
 
 mcp = FastMCP("mcp-linkedin")
 logger = logging.getLogger(__name__)
@@ -89,43 +90,43 @@ def send_message(recipient_profile_url: str, message: str) -> str:
     try:
         profile_id = recipient_profile_url.strip("/").split("/")[-1]
 
-        # Search for the person to get their profile_id (numeric urn)
-        results = client.search_people(keyword_first_name=profile_id.split("-")[0] if "-" in profile_id else profile_id, limit=5)
-        
-        # Try to get profile directly first
+        # Step 1: get profile
         profile = client.get_profile(public_id=profile_id)
         if not profile:
             return json.dumps({"error": f"Could not find profile for '{profile_id}'"})
 
-        # profile_id field inside profile is the raw numeric/alphanumeric URN id
+        # Step 2: get raw numeric/alphanumeric profile_id from profile
         raw_profile_id = profile.get("profile_id")
         if not raw_profile_id:
-            # fallback: extract from entityUrn
             entity_urn = profile.get("entityUrn", "")
             raw_profile_id = entity_urn.split(":")[-1]
-
         if not raw_profile_id:
-            return json.dumps({"error": f"Could not extract profile URN id for '{profile_id}'"})
+            return json.dumps({"error": f"Could not extract URN id for '{profile_id}'"})
 
-        logger.info(f"Sending message to profile_id: {raw_profile_id}")
+        logger.info(f"Resolved profile_id: {raw_profile_id}")
 
-        # Use conversation_urn_id approach via get_conversation_details
-        try:
-            conversation = client.get_conversation_details(raw_profile_id)
-            conversation_urn_id = conversation.get("id")
-            if conversation_urn_id:
-                err = client.send_message(conversation_urn_id=conversation_urn_id, message_body=message)
-                if not err:
-                    return json.dumps({"success": True, "message": f"Message sent to {profile_id} via existing conversation!"})
-        except Exception as conv_err:
-            logger.warning(f"Could not get conversation details: {conv_err}, trying recipients method")
+        # Step 3: get existing conversation urn_id
+        conversation = client.get_conversation_details(raw_profile_id)
+        if not conversation:
+            return json.dumps({"error": "No existing conversation found. You must be 1st-degree connected with this person."})
 
-        # Fallback: send via recipients list (raw profile urn id)
-        err = client.send_message(recipients=[raw_profile_id], message_body=message)
-        if not err:
-            return json.dumps({"success": True, "message": f"Message sent to {profile_id}!"})
-        else:
-            return json.dumps({"error": "Failed to send message. Ensure you are connected with this person on LinkedIn."})
+        conversation_urn_id = conversation.get("entityUrn", "").split(":")[-1]
+        if not conversation_urn_id:
+            conversation_urn_id = str(conversation.get("id", ""))
+        if not conversation_urn_id:
+            return json.dumps({"error": "Could not extract conversation URN ID."})
+
+        logger.info(f"Using conversation_urn_id: {conversation_urn_id}")
+
+        # Step 4: send message using conversation_urn_id (most reliable path)
+        err = client.send_message(
+            conversation_urn_id=conversation_urn_id,
+            message_body=message
+        )
+
+        if err:
+            return json.dumps({"error": "Message send failed. LinkedIn returned an error."})
+        return json.dumps({"success": True, "message": f"Message sent to {profile_id}!"})
 
     except Exception as e:
         logger.error(f"Error sending message: {e}")
